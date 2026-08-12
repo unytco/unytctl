@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use hc_seed_bundle::SharedLockedArray;
 use hc_seed_bundle::dependencies::sodoken::LockedArray;
 use holo_hash::AgentPubKeyB64;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -121,7 +121,18 @@ async fn main() -> anyhow::Result<()> {
 fn read_passphrase(passphrase: Option<String>) -> Result<SharedLockedArray, std::io::Error> {
     let pass = match passphrase {
         Some(passphrase) => passphrase,
-        None => rpassword::prompt_password("Enter passphrase: ")?,
+        None => {
+            if std::io::stdin().is_terminal() {
+                rpassword::prompt_password("Enter passphrase: ")?
+            } else {
+                rpassword::read_password_with_config(
+                    rpassword::ConfigBuilder::new()
+                        .input_reader(std::io::stdin())
+                        .output_discard()
+                        .build(),
+                )?
+            }
+        }
     };
     let pass = Zeroizing::new(pass);
     let pass_locked = LockedArray::from(pass.as_bytes().to_vec());

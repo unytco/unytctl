@@ -48,16 +48,17 @@ pub enum UnytCtlError {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SeedBundle {
+    raw_pubkey: String,
     agent_pubkey: AgentPubKeyB64,
-
     bundle: String,
 }
 
 impl SeedBundle {
     pub fn new(agent_pubkey: AgentPubKey, bundle: Box<[u8]>) -> Self {
         Self {
-            agent_pubkey: AgentPubKeyB64::from(agent_pubkey),
+            raw_pubkey: base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(agent_pubkey.get_raw_32()),
             bundle: base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(&bundle),
+            agent_pubkey: AgentPubKeyB64::from(agent_pubkey),
         }
     }
 

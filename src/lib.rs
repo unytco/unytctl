@@ -28,13 +28,13 @@ pub enum UnytCtlError {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ProgenitorBundle {
+pub struct SeedBundle {
     agent_pubkey: AgentPubKeyB64,
 
     bundle: String,
 }
 
-impl ProgenitorBundle {
+impl SeedBundle {
     pub fn new(agent_pubkey: AgentPubKey, bundle: Box<[u8]>) -> Self {
         Self {
             agent_pubkey: AgentPubKeyB64::from(agent_pubkey),
@@ -48,14 +48,14 @@ impl ProgenitorBundle {
 }
 
 /// Create a seed bundle containing an agent keypair.
-pub async fn create_progenitor(passphrase: SharedLockedArray) -> Result<ProgenitorBundle, OneErr> {
+pub async fn create_seed_bundle(passphrase: SharedLockedArray) -> Result<SeedBundle, OneErr> {
     let bundle = UnlockedSeedBundle::new_random().await?;
 
     let agent_key = AgentPubKey::from_raw_32(bundle.get_sign_pub_key().to_vec());
 
     let locked = bundle.lock().add_pwhash_cipher(passphrase).lock().await?;
 
-    Ok(ProgenitorBundle::new(agent_key, locked))
+    Ok(SeedBundle::new(agent_key, locked))
 }
 
 #[derive(Debug, Serialize)]

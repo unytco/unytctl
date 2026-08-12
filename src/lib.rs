@@ -319,6 +319,12 @@ pub struct AppInfoSummary {
     manifest: AppManifest
 }
 
+impl AppInfoSummary {
+    pub fn to_json(&self) -> serde_json::Result<String> {
+        serde_json::to_string(self)
+    }
+}
+
 impl From<AppInfo> for AppInfoSummary {
     fn from(app_info: AppInfo) -> Self {
         AppInfoSummary {
@@ -373,6 +379,7 @@ pub async fn install_happ(
                         RoleSettings::Provisioned {
                             membrane_proof: None,
                             modifiers: None,
+                            init_properties: None,
                         }
                     });
 
@@ -414,4 +421,15 @@ pub async fn install_happ(
         .await?;
 
     Ok(response.into())
+}
+
+pub async fn lair_sign_base64(agent_pubkey: AgentPubKeyB64, pass_locked: SharedLockedArray, lair_url: String, data: String) -> Result<String, UnytCtlError> {
+    let client = lair_keystore_api::ipc_keystore_connect(Url::parse(&lair_url)?, pass_locked).await?;
+
+    let data = base64::prelude::BASE64_URL_SAFE_NO_PAD.decode(data.as_bytes())?;
+    let agent_pubkey: AgentPubKey = agent_pubkey.into();
+    let pubkey: [u8; hc_seed_bundle::dependencies::sodoken::sign::PUBLICKEYBYTES] = agent_pubkey.get_raw_32().try_into().unwrap();
+    let signature = client.sign_by_pub_key(pubkey.into(), None, Arc::from(data)).await?;
+
+    Ok(base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(signature.as_slice()))
 }

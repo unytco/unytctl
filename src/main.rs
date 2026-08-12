@@ -51,6 +51,20 @@ pub enum CliCommand {
         #[clap(long)]
         join_payload_path: PathBuf,
     },
+    /// Accepts base64 encoded data and connects to Lair to sign the byte content with the identified agent identity.
+    LairSignBase64 {
+        #[clap(long)]
+        agent_pubkey: AgentPubKeyB64,
+
+        #[arg(long)]
+        passphrase: Option<String>,
+
+        #[clap(long)]
+        lair_url: String,
+
+        #[clap(long, allow_hyphen_values = true)]
+        data: String,
+    }
 }
 
 #[tokio::main]
@@ -107,10 +121,17 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
 
-            let app_info = serde_json::to_string(&app_info)?;
+            let mut out = std::io::stdout();
+            out.write_all(app_info.to_json()?.as_bytes())?;
+            out.flush()?;
+        }
+        CliCommand::LairSignBase64 { agent_pubkey, passphrase, lair_url, data } => {
+            let pass_locked = read_passphrase(passphrase)?;
+
+            let signature = unytctl::lair_sign_base64(agent_pubkey, pass_locked, lair_url, data).await?;
 
             let mut out = std::io::stdout();
-            out.write_all(app_info.as_bytes())?;
+            out.write_all(signature.as_bytes())?;
             out.flush()?;
         }
     };

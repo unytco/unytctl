@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::sync::Arc;
 use base64::Engine;
 use hc_seed_bundle::dependencies::one_err::OneErr;
 use hc_seed_bundle::{LockedSeedCipher, SharedLockedArray, UnlockedSeedBundle};
@@ -7,6 +5,7 @@ use holo_hash::AgentPubKeyB64;
 use holochain_client::AgentPubKey;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -22,7 +21,7 @@ pub enum UnytCtlError {
 
     #[error(transparent)]
     HttpRequestFailed(#[from] reqwest::Error),
-    
+
     #[error("Error: {0}")]
     Other(String),
 }
@@ -59,6 +58,32 @@ pub async fn create_seed_bundle(passphrase: SharedLockedArray) -> Result<SeedBun
 }
 
 #[derive(Debug, Serialize)]
+pub struct BareSigningKeypair {
+    public_key: AgentPubKeyB64,
+
+    seed_hex: String,
+}
+
+impl BareSigningKeypair {
+    pub fn to_json(&self) -> serde_json::Result<String> {
+        serde_json::to_string(&self)
+    }
+}
+
+pub async fn create_bare_signing_keypair() -> Result<BareSigningKeypair, UnytCtlError> {
+    let bundle = UnlockedSeedBundle::new_random().await?;
+
+    let public_key =
+        AgentPubKeyB64::from(AgentPubKey::from_raw_32(bundle.get_sign_pub_key().to_vec()));
+    let seed_hex = hex::encode(&*bundle.get_seed().lock().expect("Poisoned").lock());
+
+    Ok(BareSigningKeypair {
+        public_key,
+        seed_hex,
+    })
+}
+
+#[derive(Debug, Serialize)]
 struct JoinRequest {
     agent_key: AgentPubKeyB64,
 }
@@ -81,7 +106,7 @@ struct JoinResponse {
     session: String,
     status: String,
     reason: Option<String>,
-    challenges: Option<Vec<JoinResponseChallenge>>
+    challenges: Option<Vec<JoinResponseChallenge>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -120,21 +145,26 @@ pub async fn create_membrane_proof(
         }
     };
 
-    let agent_key = AgentPubKeyB64::new(AgentPubKey::from_raw_32(unlocked.get_sign_pub_key().to_vec()));
+    let agent_key = AgentPubKeyB64::new(AgentPubKey::from_raw_32(
+        unlocked.get_sign_pub_key().to_vec(),
+    ));
 
     // Now that we know the passphrase is correct, we can continue to contact the joining service.
     let join_url = joining_service_url.join("/v1/join")?;
     let client = reqwest::Client::new();
     let response = client
         .post(join_url.clone())
-        .json(&JoinRequest {
-            agent_key,
-        })
+        .json(&JoinRequest { agent_key })
         .send()
         .await?;
 
     if response.status() != StatusCode::CREATED && response.status() != StatusCode::OK {
-        return Err(UnytCtlError::Other(format!("Join failed when contacting {}: {} - {}", join_url, response.status(), response.text().await?)))
+        return Err(UnytCtlError::Other(format!(
+            "Join failed when contacting {}: {} - {}",
+            join_url,
+            response.status(),
+            response.text().await?
+        )));
     }
 
     let response: JoinResponse = response.json().await?;
@@ -143,46 +173,70 @@ pub async fn create_membrane_proof(
         // We need to complete the challenge
 
         let Some(challenges) = response.challenges else {
-            return Err(UnytCtlError::Other("Join status is pending but challenges are missing".to_string()));
+            return Err(UnytCtlError::Other(
+                "Join status is pending but challenges are missing".to_string(),
+            ));
         };
 
         if challenges.is_empty() {
-            return Err(UnytCtlError::Other("Join status is pending but no challenges were sent".to_string()));
+            return Err(UnytCtlError::Other(
+                "Join status is pending but no challenges were sent".to_string(),
+            ));
         }
 
-        let Some(allow_list_challenge) = challenges.iter().find(|c| c.typ == "agent_allow_list") else {
-            return Err(UnytCtlError::Other("No allow list challenges were found".to_string()));
+        let Some(allow_list_challenge) = challenges.iter().find(|c| c.typ == "agent_allow_list")
+        else {
+            return Err(UnytCtlError::Other(
+                "No allow list challenges were found".to_string(),
+            ));
         };
 
-        let Some(nonce) = allow_list_challenge.metadata.as_ref().map(|m| m.nonce.clone()) else {
-            return Err(UnytCtlError::Other("No nonce found in allow_list".to_string()));
+        let Some(nonce) = allow_list_challenge
+            .metadata
+            .as_ref()
+            .map(|m| m.nonce.clone())
+        else {
+            return Err(UnytCtlError::Other(
+                "No nonce found in allow_list".to_string(),
+            ));
         };
 
         let nonce = base64::prelude::BASE64_STANDARD.decode(nonce.as_bytes())?;
         let signature = unlocked.sign_detached(nonce.into()).await?;
 
-        let signature = base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(signature.as_slice());
+        let signature = base64::prelude::BASE64_STANDARD.encode(signature.as_slice());
 
-        let verify_url = joining_service_url.join(&format!("/v1/join/{}/verify", response.session))?;
-        let response = client.post(verify_url).json(&VerifyRequest {
-            challenge_id: allow_list_challenge.id.clone(),
-            response: signature,
-        }).send().await?;
+        let verify_url =
+            joining_service_url.join(&format!("/v1/join/{}/verify", response.session))?;
+        let response = client
+            .post(verify_url)
+            .json(&VerifyRequest {
+                challenge_id: allow_list_challenge.id.clone(),
+                response: signature,
+            })
+            .send()
+            .await?;
 
         if response.status() != StatusCode::OK {
-           let msg = response.text().await?;
-           return Err(UnytCtlError::Other(format!("Verification failed: {}", msg)));
+            let msg = response.text().await?;
+            return Err(UnytCtlError::Other(format!("Verification failed: {}", msg)));
         }
 
         let response: VerifyResponse = response.json().await?;
 
         if response.status != "ready" {
-            return Err(UnytCtlError::Other(format!("Verification failed: {}", response.status)));
+            return Err(UnytCtlError::Other(format!(
+                "Verification failed: {}",
+                response.status
+            )));
         }
     } else if response.status == "ready" {
         // Already joined, can just look up the content
     } else {
-        return Err(UnytCtlError::Other(format!("Unexpected response status: {}", response.status)));
+        return Err(UnytCtlError::Other(format!(
+            "Unexpected response status: {} - {:?}",
+            response.status, response.reason
+        )));
     }
 
     let response = get_provisioned_join(&client, joining_service_url, response.session).await?;
@@ -219,7 +273,10 @@ async fn get_provisioned_join(
 
     if response.status() != StatusCode::OK {
         let msg = response.text().await?;
-        return Err(UnytCtlError::Other(format!("Failed to get provision: {}", msg)));
+        return Err(UnytCtlError::Other(format!(
+            "Failed to get provision: {}",
+            msg
+        )));
     }
 
     let response: ProvisionResponse = response.json().await?;

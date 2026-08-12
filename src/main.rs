@@ -14,11 +14,16 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum CliCommand {
+    /// Generate a seed bundle that can be imported into Lair keystore.
     SeedBundle {
         #[arg(long)]
         passphrase: Option<String>,
     },
+    /// Generate a bare signing keypair that is not protected as a seed bundle.
+    BareSigningKeypair {
 
+    },
+    /// Generate a membrane proof by bootstrapping the joining service for a given progenitor.
     MembraneProof {
         #[clap(long)]
         seed_bundle: PathBuf,
@@ -45,7 +50,13 @@ async fn main() -> anyhow::Result<()> {
             out.write_all(bundle.to_json()?.as_bytes())?;
             out.flush()?;
         }
+        CliCommand::BareSigningKeypair { } => {
+            let keypair = unytctl::create_bare_signing_keypair().await?;
 
+            let mut out = std::io::stdout();
+            out.write_all(keypair.to_json()?.as_bytes())?;
+            out.flush()?;
+        }
         CliCommand::MembraneProof { seed_bundle, seed_bundle_passphrase, joining_service_url } => {
             let pass_locked = read_passphrase(seed_bundle_passphrase)?;
 

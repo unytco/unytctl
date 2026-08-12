@@ -4002,6 +4002,7 @@ dependencies = [
  "base64 0.23.1",
  "clap",
  "hc_seed_bundle",
+ "hex",
  "holo_hash",
  "holochain_client",
  "reqwest",

@@ -1,9 +1,11 @@
 use clap::{Parser, Subcommand};
+use hc_seed_bundle::SharedLockedArray;
 use hc_seed_bundle::dependencies::sodoken::LockedArray;
+use holo_hash::AgentPubKeyB64;
 use std::io::Write;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use hc_seed_bundle::SharedLockedArray;
 use zeroize::Zeroizing;
 
 #[derive(Parser, Debug)]
@@ -20,11 +22,9 @@ pub enum CliCommand {
         passphrase: Option<String>,
     },
     /// Generate a bare signing keypair that is not protected as a seed bundle.
-    BareSigningKeypair {
-
-    },
-    /// Generate a membrane proof by bootstrapping the joining service for a given progenitor.
-    MembraneProof {
+    BareSigningKeypair,
+    /// Join the joining service with a given progenitor.
+    JoiningServiceJoin {
         #[clap(long)]
         seed_bundle: PathBuf,
 
@@ -33,7 +33,24 @@ pub enum CliCommand {
 
         #[clap(long)]
         joining_service_url: String,
-    }
+    },
+    /// Install an app, including setting modifiers and role overrides from a `joining-service-join` output.
+    InstallHapp {
+        #[clap(long)]
+        admin_ws: SocketAddr,
+
+        #[clap(long)]
+        admin_ws_origin: Option<String>,
+
+        #[clap(long)]
+        happ_path: PathBuf,
+
+        #[clap(long)]
+        existing_agent: AgentPubKeyB64,
+
+        #[clap(long)]
+        join_payload_path: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -50,22 +67,50 @@ async fn main() -> anyhow::Result<()> {
             out.write_all(bundle.to_json()?.as_bytes())?;
             out.flush()?;
         }
-        CliCommand::BareSigningKeypair { } => {
+        CliCommand::BareSigningKeypair {} => {
             let keypair = unytctl::create_bare_signing_keypair().await?;
 
             let mut out = std::io::stdout();
             out.write_all(keypair.to_json()?.as_bytes())?;
             out.flush()?;
         }
-        CliCommand::MembraneProof { seed_bundle, seed_bundle_passphrase, joining_service_url } => {
+        CliCommand::JoiningServiceJoin {
+            seed_bundle,
+            seed_bundle_passphrase,
+            joining_service_url,
+        } => {
             let pass_locked = read_passphrase(seed_bundle_passphrase)?;
 
             let seed_bundle = std::fs::read_to_string(seed_bundle)?;
 
-            let proofs = unytctl::create_membrane_proof(joining_service_url, seed_bundle, pass_locked).await?;
+            let proofs =
+                unytctl::joining_service_join(joining_service_url, seed_bundle, pass_locked)
+                    .await?;
 
             let mut out = std::io::stdout();
             out.write_all(proofs.to_json()?.as_bytes())?;
+            out.flush()?;
+        }
+        CliCommand::InstallHapp {
+            admin_ws,
+            admin_ws_origin,
+            happ_path,
+            existing_agent,
+            join_payload_path,
+        } => {
+            let app_info = unytctl::install_happ(
+                admin_ws,
+                admin_ws_origin,
+                happ_path,
+                existing_agent,
+                join_payload_path,
+            )
+            .await?;
+
+            let app_info = serde_json::to_string(&app_info)?;
+
+            let mut out = std::io::stdout();
+            out.write_all(app_info.as_bytes())?;
             out.flush()?;
         }
     };
@@ -76,9 +121,7 @@ async fn main() -> anyhow::Result<()> {
 fn read_passphrase(passphrase: Option<String>) -> Result<SharedLockedArray, std::io::Error> {
     let pass = match passphrase {
         Some(passphrase) => passphrase,
-        None => {
-            rpassword::prompt_password("Enter passphrase: ")?
-        }
+        None => rpassword::prompt_password("Enter passphrase: ")?,
     };
     let pass = Zeroizing::new(pass);
     let pass_locked = LockedArray::from(pass.as_bytes().to_vec());

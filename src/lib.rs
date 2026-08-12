@@ -2,10 +2,19 @@ use base64::Engine;
 use hc_seed_bundle::dependencies::one_err::OneErr;
 use hc_seed_bundle::{LockedSeedCipher, SharedLockedArray, UnlockedSeedBundle};
 use holo_hash::AgentPubKeyB64;
-use holochain_client::AgentPubKey;
+use holochain_client::{
+    AgentPubKey, AppInfo, ConductorApiError, InstallAppPayload, SerializedBytes,
+};
+use holochain_types::app::RoleSettings;
+use holochain_types::prelude::{
+    AppBundleSource, DnaModifiersOpt, RoleSettingsMap, UnsafeBytes, YamlProperties,
+};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -16,11 +25,26 @@ pub enum UnytCtlError {
     #[error("An hc_seed_bundle crypto operation failed: {0}")]
     CryptoError(#[from] OneErr),
 
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+
     #[error("Invalid URL: {0}")]
     InvalidUrl(#[from] url::ParseError),
 
     #[error(transparent)]
     HttpRequestFailed(#[from] reqwest::Error),
+
+    #[error("Client error: {0}")]
+    ClientError(#[from] ConductorApiError),
+
+    #[error(transparent)]
+    JsonError(#[from] serde_json::error::Error),
+
+    #[error(transparent)]
+    YamlError(#[from] serde_yaml::Error),
+
+    #[error("Bundle error: {0}")]
+    BundleError(#[from] holochain_types::prelude::AppBundleError),
 
     #[error("Error: {0}")]
     Other(String),
@@ -120,7 +144,7 @@ struct VerifyResponse {
     status: String,
 }
 
-pub async fn create_membrane_proof(
+pub async fn joining_service_join(
     joining_service_url: String,
     seed_bundle: String,
     seed_bundle_passphrase: SharedLockedArray,
@@ -247,7 +271,7 @@ pub async fn create_membrane_proof(
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProvisionResponseDnaModifiers {
     network_seed: Option<String>,
-    properties: Option<HashMap<String, serde_json::Value>>,
+    properties: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -280,6 +304,80 @@ async fn get_provisioned_join(
     }
 
     let response: ProvisionResponse = response.json().await?;
+
+    Ok(response)
+}
+
+pub async fn install_happ(
+    admin_ws: SocketAddr,
+    admin_ws_origin: Option<String>,
+    happ_path: PathBuf,
+    existing_agent: AgentPubKeyB64,
+    join_payload_path: PathBuf,
+) -> Result<AppInfo, UnytCtlError> {
+    let join_payload = std::fs::read_to_string(join_payload_path)?;
+    let join_payload: ProvisionResponse = serde_json::from_str(&join_payload)?;
+
+    let admin_ws = holochain_client::AdminWebsocket::connect(admin_ws, admin_ws_origin).await?;
+
+    let props = join_payload
+        .dna_modifiers
+        .as_ref()
+        .and_then(|m| m.properties.as_ref().map(|p| serde_yaml::to_value(p)))
+        .transpose()?
+        .map(|p| YamlProperties::new(p));
+
+    let mut role_settings: RoleSettingsMap = HashMap::new();
+
+    // Set membrane proofs for any roles that we have membrane proofs for
+    if let Some(membrane_proofs) = join_payload.membrane_proofs {
+        for (role, proof) in membrane_proofs {
+            let role_settings =
+                role_settings
+                    .entry(role)
+                    .or_insert_with(|| {
+                        RoleSettings::Provisioned {
+                            membrane_proof: None,
+                            modifiers: None,
+                        }
+                    });
+
+            match role_settings {
+                RoleSettings::Provisioned {
+                    membrane_proof,
+                    modifiers,
+                    ..
+                } => {
+                    let proof_bytes = base64::prelude::BASE64_STANDARD.decode(proof)?;
+                    *membrane_proof = Some(Arc::new(SerializedBytes::from(UnsafeBytes::from(
+                        proof_bytes,
+                    ))));
+
+                    *modifiers = Some(DnaModifiersOpt {
+                        network_seed: None,
+                        properties: props.clone(),
+                    })
+                }
+                _ => {
+                    unreachable!();
+                }
+            }
+        }
+    }
+
+    let response = admin_ws
+        .install_app(InstallAppPayload {
+            source: AppBundleSource::Path(happ_path),
+            agent_key: Some(existing_agent.into()),
+            installed_app_id: None,
+            network_seed: join_payload
+                .dna_modifiers
+                .and_then(|m| m.network_seed)
+                .filter(|s| !s.is_empty()),
+            roles_settings: Some(role_settings),
+            ignore_genesis_failure: false,
+        })
+        .await?;
 
     Ok(response)
 }

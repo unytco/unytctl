@@ -1,17 +1,13 @@
 use base64::Engine;
 use hc_seed_bundle::dependencies::one_err::OneErr;
 use hc_seed_bundle::{LockedSeedCipher, SharedLockedArray, UnlockedSeedBundle};
-use holo_hash::AgentPubKeyB64;
-use holochain_client::{
-    AgentPubKey, AppInfo, ConductorApiError, InstallAppPayload, SerializedBytes,
-};
-use holochain_types::app::RoleSettings;
-use holochain_types::prelude::{
-    AppBundleSource, DnaModifiersOpt, RoleSettingsMap, UnsafeBytes, YamlProperties,
-};
+use holo_hash::{AgentPubKeyB64, DnaHashB64};
+use holochain_client::{AgentPubKey, AppInfo, CellInfo, ConductorApiError, InstallAppPayload, SerializedBytes};
+use holochain_types::app::{InstalledAppId, RoleSettings};
+use holochain_types::prelude::{AppBundleSource, AppManifest, DnaModifiersOpt, RoleName, RoleSettingsMap, UnsafeBytes, YamlProperties};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -308,13 +304,50 @@ async fn get_provisioned_join(
     Ok(response)
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CellInfoSummary {
+    name: String,
+    dna_hash: DnaHashB64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AppInfoSummary {
+    installed_app_id: InstalledAppId,
+    agent_pub_key: AgentPubKeyB64,
+    cells: BTreeMap<RoleName, Vec<CellInfoSummary>>,
+    manifest: AppManifest
+}
+
+impl From<AppInfo> for AppInfoSummary {
+    fn from(app_info: AppInfo) -> Self {
+        AppInfoSummary {
+            installed_app_id: app_info.installed_app_id,
+            agent_pub_key: AgentPubKeyB64::from(app_info.agent_pub_key.clone()),
+            cells: app_info.cell_info.iter().map(|(role_name, infos)| {
+                (role_name.clone(), infos.iter().filter_map(|i|
+                    match i {
+                        CellInfo::Provisioned(p) => {
+                            Some(CellInfoSummary {
+                                name: p.name.clone(),
+                                dna_hash: DnaHashB64::from(p.cell_id.dna_hash().clone())
+                            })
+                        }
+                        _ => None,
+                    }
+                ).collect())
+            }).collect(),
+            manifest: app_info.manifest,
+        }
+    }
+}
+
 pub async fn install_happ(
     admin_ws: SocketAddr,
     admin_ws_origin: Option<String>,
     happ_path: PathBuf,
     existing_agent: AgentPubKeyB64,
     join_payload_path: PathBuf,
-) -> Result<AppInfo, UnytCtlError> {
+) -> Result<AppInfoSummary, UnytCtlError> {
     let join_payload = std::fs::read_to_string(join_payload_path)?;
     let join_payload: ProvisionResponse = serde_json::from_str(&join_payload)?;
 
@@ -379,5 +412,5 @@ pub async fn install_happ(
         })
         .await?;
 
-    Ok(response)
+    Ok(response.into())
 }

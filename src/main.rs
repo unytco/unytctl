@@ -64,7 +64,7 @@ pub enum CliCommand {
 
         #[clap(long, allow_hyphen_values = true)]
         data: String,
-    }
+    },
 }
 
 #[tokio::main]
@@ -125,10 +125,16 @@ async fn main() -> anyhow::Result<()> {
             out.write_all(app_info.to_json()?.as_bytes())?;
             out.flush()?;
         }
-        CliCommand::LairSignBase64 { agent_pubkey, passphrase, lair_url, data } => {
+        CliCommand::LairSignBase64 {
+            agent_pubkey,
+            passphrase,
+            lair_url,
+            data,
+        } => {
             let pass_locked = read_passphrase(passphrase)?;
 
-            let signature = unytctl::lair_sign_base64(agent_pubkey, pass_locked, lair_url, data).await?;
+            let signature =
+                unytctl::lair_sign_base64(agent_pubkey, pass_locked, lair_url, data).await?;
 
             let mut out = std::io::stdout();
             out.write_all(signature.as_bytes())?;

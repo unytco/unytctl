@@ -2,9 +2,14 @@ use base64::Engine;
 use hc_seed_bundle::dependencies::one_err::OneErr;
 use hc_seed_bundle::{LockedSeedCipher, SharedLockedArray, UnlockedSeedBundle};
 use holo_hash::{AgentPubKeyB64, DnaHashB64};
-use holochain_client::{AgentPubKey, AppInfo, CellInfo, ConductorApiError, InstallAppPayload, SerializedBytes};
+use holochain_client::{
+    AgentPubKey, AppInfo, CellInfo, ConductorApiError, InstallAppPayload, SerializedBytes,
+};
 use holochain_types::app::{InstalledAppId, RoleSettings};
-use holochain_types::prelude::{AppBundleSource, AppManifest, DnaModifiersOpt, RoleName, RoleSettingsMap, UnsafeBytes, YamlProperties};
+use holochain_types::prelude::{
+    AppBundleSource, AppManifest, DnaModifiersOpt, RoleName, RoleSettingsMap, UnsafeBytes,
+    YamlProperties,
+};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -316,7 +321,7 @@ pub struct AppInfoSummary {
     installed_app_id: InstalledAppId,
     agent_pub_key: AgentPubKeyB64,
     cells: BTreeMap<RoleName, Vec<CellInfoSummary>>,
-    manifest: AppManifest
+    manifest: AppManifest,
 }
 
 impl AppInfoSummary {
@@ -330,19 +335,25 @@ impl From<AppInfo> for AppInfoSummary {
         AppInfoSummary {
             installed_app_id: app_info.installed_app_id,
             agent_pub_key: AgentPubKeyB64::from(app_info.agent_pub_key.clone()),
-            cells: app_info.cell_info.iter().map(|(role_name, infos)| {
-                (role_name.clone(), infos.iter().filter_map(|i|
-                    match i {
-                        CellInfo::Provisioned(p) => {
-                            Some(CellInfoSummary {
-                                name: p.name.clone(),
-                                dna_hash: DnaHashB64::from(p.cell_id.dna_hash().clone())
+            cells: app_info
+                .cell_info
+                .iter()
+                .map(|(role_name, infos)| {
+                    (
+                        role_name.clone(),
+                        infos
+                            .iter()
+                            .filter_map(|i| match i {
+                                CellInfo::Provisioned(p) => Some(CellInfoSummary {
+                                    name: p.name.clone(),
+                                    dna_hash: DnaHashB64::from(p.cell_id.dna_hash().clone()),
+                                }),
+                                _ => None,
                             })
-                        }
-                        _ => None,
-                    }
-                ).collect())
-            }).collect(),
+                            .collect(),
+                    )
+                })
+                .collect(),
             manifest: app_info.manifest,
         }
     }
@@ -375,12 +386,10 @@ pub async fn install_happ(
             let role_settings =
                 role_settings
                     .entry(role)
-                    .or_insert_with(|| {
-                        RoleSettings::Provisioned {
-                            membrane_proof: None,
-                            modifiers: None,
-                            init_properties: None,
-                        }
+                    .or_insert_with(|| RoleSettings::Provisioned {
+                        membrane_proof: None,
+                        modifiers: None,
+                        init_properties: None,
                     });
 
             match role_settings {
@@ -423,13 +432,22 @@ pub async fn install_happ(
     Ok(response.into())
 }
 
-pub async fn lair_sign_base64(agent_pubkey: AgentPubKeyB64, pass_locked: SharedLockedArray, lair_url: String, data: String) -> Result<String, UnytCtlError> {
-    let client = lair_keystore_api::ipc_keystore_connect(Url::parse(&lair_url)?, pass_locked).await?;
+pub async fn lair_sign_base64(
+    agent_pubkey: AgentPubKeyB64,
+    pass_locked: SharedLockedArray,
+    lair_url: String,
+    data: String,
+) -> Result<String, UnytCtlError> {
+    let client =
+        lair_keystore_api::ipc_keystore_connect(Url::parse(&lair_url)?, pass_locked).await?;
 
     let data = base64::prelude::BASE64_URL_SAFE_NO_PAD.decode(data.as_bytes())?;
     let agent_pubkey: AgentPubKey = agent_pubkey.into();
-    let pubkey: [u8; hc_seed_bundle::dependencies::sodoken::sign::PUBLICKEYBYTES] = agent_pubkey.get_raw_32().try_into().unwrap();
-    let signature = client.sign_by_pub_key(pubkey.into(), None, Arc::from(data)).await?;
+    let pubkey: [u8; hc_seed_bundle::dependencies::sodoken::sign::PUBLICKEYBYTES] =
+        agent_pubkey.get_raw_32().try_into().unwrap();
+    let signature = client
+        .sign_by_pub_key(pubkey.into(), None, Arc::from(data))
+        .await?;
 
     Ok(base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(signature.as_slice()))
 }

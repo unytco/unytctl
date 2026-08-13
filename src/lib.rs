@@ -101,6 +101,11 @@ pub async fn create_bare_signing_keypair() -> Result<BareSigningKeypair, UnytCtl
 
     let public_key =
         AgentPubKeyB64::from(AgentPubKey::from_raw_32(bundle.get_sign_pub_key().to_vec()));
+    // `hex::encode` takes `impl AsRef<[u8]>`, so clippy wants the borrow dropped.
+    // Don't: the guard derefs to `[u8; 32]`, which is `Copy`, so `*guard` would copy
+    // the seed out of libsodium's `sodium_malloc` region onto the stack, losing the
+    // mlock, the `mprotect_noaccess` on guard drop, and the zero-on-free.
+    #[allow(clippy::needless_borrows_for_generic_args)]
     let seed_hex = hex::encode(&*bundle.get_seed().lock().expect("Poisoned").lock());
 
     Ok(BareSigningKeypair {
@@ -374,9 +379,9 @@ pub async fn install_happ(
     let props = join_payload
         .dna_modifiers
         .as_ref()
-        .and_then(|m| m.properties.as_ref().map(|p| serde_yaml::to_value(p)))
+        .and_then(|m| m.properties.as_ref().map(serde_yaml::to_value))
         .transpose()?
-        .map(|p| YamlProperties::new(p));
+        .map(YamlProperties::new);
 
     let mut role_settings: RoleSettingsMap = HashMap::new();
 

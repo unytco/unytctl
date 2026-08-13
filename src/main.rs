@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
             out.write_all(bundle.to_json()?.as_bytes())?;
             out.flush()?;
         }
-        CliCommand::BareSigningKeypair {} => {
+        CliCommand::BareSigningKeypair => {
             let keypair = unytctl::create_bare_signing_keypair().await?;
 
             let mut out = std::io::stdout();

@@ -42,7 +42,7 @@ pub enum UnytCtlError {
     JsonError(#[from] serde_json::error::Error),
 
     #[error(transparent)]
-    YamlError(#[from] serde_yaml::Error),
+    YamlError(#[from] yaml_serde::Error),
 
     #[error("Bundle error: {0}")]
     BundleError(#[from] holochain_types::prelude::AppBundleError),
@@ -379,7 +379,7 @@ pub async fn install_happ(
     let props = join_payload
         .dna_modifiers
         .as_ref()
-        .and_then(|m| m.properties.as_ref().map(serde_yaml::to_value))
+        .and_then(|m| m.properties.as_ref().map(yaml_serde::to_value))
         .transpose()?
         .map(YamlProperties::new);
 
@@ -431,6 +431,7 @@ pub async fn install_happ(
                 .filter(|s| !s.is_empty()),
             roles_settings: Some(role_settings),
             ignore_genesis_failure: false,
+            restore_from_dht: false,
         })
         .await?;
 

@@ -8,11 +8,11 @@ name = "unytctl"
 path = "src/main.rs"
 
 [dependencies]
-holochain_client = "0.8"
-holo_hash = "0.6"
-holochain_types = "0.6"
-hc_seed_bundle = "0.6.3"
-lair_keystore_api = "0.6.3"
+holochain_client = "0.9"
+holo_hash = "0.7"
+holochain_types = "0.7"
+hc_seed_bundle = "0.7"
+lair_keystore_api = "0.7"
 
 anyhow = "1.0"
 base64 = "0.23"
@@ -22,10 +22,10 @@ reqwest = { version = "0.13", features = ["json"] }
 rpassword = "7.5"
 serde = "1.0"
 serde_json = { version = "1.0", features = ["preserve_order"] }
-serde_yaml = "0.9"
 thiserror = "2.0"
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
 url = "2.5"
+yaml_serde = "0.10"
 zeroize = "1.9.0"
 
 [profile.release]

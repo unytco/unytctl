@@ -370,6 +370,7 @@ pub async fn install_happ(
     happ_path: PathBuf,
     existing_agent: AgentPubKeyB64,
     join_payload_path: PathBuf,
+    installed_app_id: Option<InstalledAppId>,
 ) -> Result<AppInfoSummary, UnytCtlError> {
     let join_payload = std::fs::read_to_string(join_payload_path)?;
     let join_payload: ProvisionResponse = serde_json::from_str(&join_payload)?;
@@ -424,7 +425,7 @@ pub async fn install_happ(
         .install_app(InstallAppPayload {
             source: AppBundleSource::Path(happ_path),
             agent_key: Some(existing_agent.into()),
-            installed_app_id: None,
+            installed_app_id,
             network_seed: join_payload
                 .dna_modifiers
                 .and_then(|m| m.network_seed)

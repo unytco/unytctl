@@ -6,6 +6,7 @@ use std::io::{IsTerminal, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use holochain_types::prelude::InstalledAppId;
 use zeroize::Zeroizing;
 
 #[derive(Parser, Debug)]
@@ -50,6 +51,9 @@ pub enum CliCommand {
 
         #[clap(long)]
         join_payload_path: PathBuf,
+
+        #[clap(long)]
+        installed_app_id: Option<InstalledAppId>,
     },
     /// Accepts base64 encoded data and connects to Lair to sign the byte content with the identified agent identity.
     LairSignBase64 {
@@ -111,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
             happ_path,
             existing_agent,
             join_payload_path,
+            installed_app_id,
         } => {
             let app_info = unytctl::install_happ(
                 admin_ws,
@@ -118,6 +123,7 @@ async fn main() -> anyhow::Result<()> {
                 happ_path,
                 existing_agent,
                 join_payload_path,
+                installed_app_id,
             )
             .await?;
 

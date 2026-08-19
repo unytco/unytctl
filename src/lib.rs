@@ -2,14 +2,13 @@ use base64::Engine;
 use hc_seed_bundle::dependencies::one_err::OneErr;
 use hc_seed_bundle::{LockedSeedCipher, SharedLockedArray, UnlockedSeedBundle};
 use holo_hash::{AgentPubKeyB64, DnaHashB64};
-use holochain_client::{
-    AgentPubKey, AppInfo, CellInfo, ConductorApiError, InstallAppPayload, SerializedBytes,
-};
+use holochain_client::{AdminWebsocket, AgentPubKey, AppInfo, AppStatusFilter, AppWebsocket, CellInfo, ConductorApiError, ExternIO, InstallAppPayload, LairAgentSigner, SerializedBytes, ZomeCallTarget};
 use holochain_types::app::{InstalledAppId, RoleSettings};
 use holochain_types::prelude::{
     AppBundleSource, AppManifest, DnaModifiersOpt, RoleName, RoleSettingsMap, UnsafeBytes,
     YamlProperties,
 };
+use holochain_types::websocket::AllowedOrigins;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -46,6 +45,9 @@ pub enum UnytCtlError {
 
     #[error("Bundle error: {0}")]
     BundleError(#[from] holochain_types::prelude::AppBundleError),
+
+    #[error(transparent)]
+    BytesEncodingError(#[from] holochain_types::prelude::SerializedBytesError),
 
     #[error("Error: {0}")]
     Other(String),
@@ -458,4 +460,81 @@ pub async fn lair_sign_base64(
         .await?;
 
     Ok(base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(signature.as_slice()))
+}
+
+pub async fn call_get_all_lane<T>(
+    admin_addr: SocketAddr,
+    installed_app_id: InstalledAppId,
+    pass_locked: SharedLockedArray,
+    lair_url: String,
+) -> Result<T, UnytCtlError>
+where
+    T: serde::de::DeserializeOwned + std::fmt::Debug,
+{
+    // Connect to Lair early to avoid talking to Holochain if the Lair passphrase is wrong.
+    let client =
+        lair_keystore_api::ipc_keystore_connect(Url::parse(&lair_url)?, pass_locked).await?;
+
+    let admin_ws = AdminWebsocket::connect(admin_addr, None).await?;
+
+    let maybe_app_interface = admin_ws
+        .list_app_interfaces()
+        .await?
+        .into_iter()
+        .find(|interface| {
+            interface.allowed_origins == AllowedOrigins::Any
+                && interface
+                    .installed_app_id
+                    .as_ref()
+                    .map(|id| id == &installed_app_id)
+                    .unwrap_or(true)
+        });
+    let app_port = match maybe_app_interface {
+        Some(app_interface) => app_interface.port,
+        None => {
+            admin_ws
+                .attach_app_interface(0, None, AllowedOrigins::Any, Some(installed_app_id.clone()))
+                .await?
+        }
+    };
+
+    let cell_id = admin_ws.list_apps(Some(AppStatusFilter::Enabled)).await?.iter().find(|app| app.installed_app_id == installed_app_id).ok_or_else(|| {
+        UnytCtlError::Other("The requested app was not found".to_string())
+    })?.cell_info.get("alliance").ok_or_else(|| {
+        UnytCtlError::Other("The alliance role was not found".to_string())
+    })?.iter().find_map(|cell| {
+        match cell {
+            CellInfo::Provisioned(cell) => {
+                Some(cell.cell_id.clone())
+            }
+            _ => None,
+        }
+    }).ok_or_else(|| {
+        UnytCtlError::Other("The expected cell was not found".to_string())
+    })?;
+
+    let token_response = admin_ws
+        .issue_app_auth_token(installed_app_id.into())
+        .await?;
+
+    let mut signer = LairAgentSigner::new(Arc::new(client));
+    signer.add_credentials(cell_id.clone(), cell_id.agent_pubkey().clone());
+    let app_ws = AppWebsocket::connect(
+        SocketAddr::new(admin_addr.ip(), app_port),
+        token_response.token,
+        Arc::new(signer),
+        None,
+    )
+    .await?;
+
+    let result = app_ws
+        .call_zome(
+            ZomeCallTarget::RoleName("alliance".to_string()),
+            "transactor".into(),
+            "get_all_lane".into(),
+            ExternIO::encode(())?,
+        )
+        .await?;
+
+    Ok(result.decode()?)
 }

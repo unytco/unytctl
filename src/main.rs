@@ -2,11 +2,11 @@ use clap::{Parser, Subcommand};
 use hc_seed_bundle::SharedLockedArray;
 use hc_seed_bundle::dependencies::sodoken::LockedArray;
 use holo_hash::AgentPubKeyB64;
+use holochain_types::prelude::InstalledAppId;
 use std::io::{IsTerminal, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use holochain_types::prelude::InstalledAppId;
 use zeroize::Zeroizing;
 
 #[derive(Parser, Debug)]
@@ -68,6 +68,21 @@ pub enum CliCommand {
 
         #[clap(long, allow_hyphen_values = true)]
         data: String,
+    },
+    /// Calls the alliance, transactor zome's get_all_lane function
+    CallGetAllLane {
+        #[clap(long)]
+        admin_ws: SocketAddr,
+        
+        #[clap(long)]
+        installed_app_id: InstalledAppId,
+
+        /// Lair passphrase for zome call signing.
+        #[arg(long)]
+        passphrase: Option<String>,
+
+        #[clap(long)]
+        lair_url: String,
     },
 }
 
@@ -144,6 +159,21 @@ async fn main() -> anyhow::Result<()> {
 
             let mut out = std::io::stdout();
             out.write_all(signature.as_bytes())?;
+            out.flush()?;
+        }
+        CliCommand::CallGetAllLane {
+            admin_ws,
+            installed_app_id,
+            passphrase,
+            lair_url,
+        } => {
+            let pass_locked = read_passphrase(passphrase)?;
+            
+            let lanes =
+                unytctl::call_get_all_lane::<serde_json::Value>(admin_ws, installed_app_id, pass_locked, lair_url).await?;
+
+            let mut out = std::io::stdout();
+            out.write_all(serde_json::to_string_pretty(&lanes)?.as_bytes())?;
             out.flush()?;
         }
     };

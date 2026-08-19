@@ -8,12 +8,14 @@ name = "unytctl"
 path = "src/main.rs"
 
 [dependencies]
-holochain_client = "0.9"
+# Holochain deps
+holochain_client = { version = "0.9", features = ["lair_signing"] }
 holo_hash = "0.7"
 holochain_types = "0.7"
 hc_seed_bundle = "0.7"
 lair_keystore_api = "0.7"
 
+# Other deps
 anyhow = "1.0"
 base64 = "0.23"
 clap = "4.6"

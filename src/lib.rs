@@ -2,7 +2,11 @@ use base64::Engine;
 use hc_seed_bundle::dependencies::one_err::OneErr;
 use hc_seed_bundle::{LockedSeedCipher, SharedLockedArray, UnlockedSeedBundle};
 use holo_hash::{AgentPubKeyB64, DnaHashB64};
-use holochain_client::{AdminWebsocket, AgentPubKey, AppInfo, AppStatusFilter, AppWebsocket, CellInfo, ConductorApiError, ExternIO, InstallAppPayload, LairAgentSigner, SerializedBytes, ZomeCallTarget};
+use holochain_client::{
+    AdminWebsocket, AgentPubKey, AppInfo, AppStatusFilter, AppWebsocket, CellInfo,
+    ConductorApiError, ExternIO, InstallAppPayload, LairAgentSigner, SerializedBytes,
+    ZomeCallTarget,
+};
 use holochain_types::app::{InstalledAppId, RoleSettings};
 use holochain_types::prelude::{
     AppBundleSource, AppManifest, DnaModifiersOpt, RoleName, RoleSettingsMap, UnsafeBytes,
@@ -498,20 +502,21 @@ where
         }
     };
 
-    let cell_id = admin_ws.list_apps(Some(AppStatusFilter::Enabled)).await?.iter().find(|app| app.installed_app_id == installed_app_id).ok_or_else(|| {
-        UnytCtlError::Other("The requested app was not found".to_string())
-    })?.cell_info.get("alliance").ok_or_else(|| {
-        UnytCtlError::Other("The alliance role was not found".to_string())
-    })?.iter().find_map(|cell| {
-        match cell {
-            CellInfo::Provisioned(cell) => {
-                Some(cell.cell_id.clone())
-            }
+    let cell_id = admin_ws
+        .list_apps(Some(AppStatusFilter::Enabled))
+        .await?
+        .iter()
+        .find(|app| app.installed_app_id == installed_app_id)
+        .ok_or_else(|| UnytCtlError::Other("The requested app was not found".to_string()))?
+        .cell_info
+        .get("alliance")
+        .ok_or_else(|| UnytCtlError::Other("The alliance role was not found".to_string()))?
+        .iter()
+        .find_map(|cell| match cell {
+            CellInfo::Provisioned(cell) => Some(cell.cell_id.clone()),
             _ => None,
-        }
-    }).ok_or_else(|| {
-        UnytCtlError::Other("The expected cell was not found".to_string())
-    })?;
+        })
+        .ok_or_else(|| UnytCtlError::Other("The expected cell was not found".to_string()))?;
 
     let token_response = admin_ws
         .issue_app_auth_token(installed_app_id.into())

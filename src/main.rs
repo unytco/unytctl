@@ -73,7 +73,7 @@ pub enum CliCommand {
     CallGetAllLane {
         #[clap(long)]
         admin_ws: SocketAddr,
-        
+
         #[clap(long)]
         installed_app_id: InstalledAppId,
 
@@ -168,9 +168,14 @@ async fn main() -> anyhow::Result<()> {
             lair_url,
         } => {
             let pass_locked = read_passphrase(passphrase)?;
-            
-            let lanes =
-                unytctl::call_get_all_lane::<serde_json::Value>(admin_ws, installed_app_id, pass_locked, lair_url).await?;
+
+            let lanes = unytctl::call_get_all_lane::<serde_json::Value>(
+                admin_ws,
+                installed_app_id,
+                pass_locked,
+                lair_url,
+            )
+            .await?;
 
             let mut out = std::io::stdout();
             out.write_all(serde_json::to_string_pretty(&lanes)?.as_bytes())?;

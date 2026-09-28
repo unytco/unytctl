@@ -288,9 +288,14 @@ pub struct ProvisionResponseDnaModifiers {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ProvisionResponse {
-    membrane_proofs: Option<HashMap<String, String>>,
+pub struct RoleProvision {
+    membrane_proof: Option<String>,
     dna_modifiers: Option<ProvisionResponseDnaModifiers>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProvisionResponse {
+    roles: Option<HashMap<String, RoleProvision>>,
 }
 
 impl ProvisionResponse {
@@ -383,47 +388,41 @@ pub async fn install_happ(
 
     let admin_ws = holochain_client::AdminWebsocket::connect(admin_ws, admin_ws_origin).await?;
 
-    let props = join_payload
-        .dna_modifiers
-        .as_ref()
-        .and_then(|m| m.properties.as_ref().map(yaml_serde::to_value))
-        .transpose()?
-        .map(YamlProperties::new);
-
     let mut role_settings: RoleSettingsMap = HashMap::new();
 
     // Set membrane proofs for any roles that we have membrane proofs for
-    if let Some(membrane_proofs) = join_payload.membrane_proofs {
-        for (role, proof) in membrane_proofs {
-            let role_settings =
-                role_settings
-                    .entry(role)
-                    .or_insert_with(|| RoleSettings::Provisioned {
-                        membrane_proof: None,
-                        modifiers: None,
-                        init_properties: None,
-                    });
-
-            match role_settings {
+    if let Some(roles) = join_payload.roles {
+        for (role, role_provision) in roles {
+            role_settings.insert(
+                role,
                 RoleSettings::Provisioned {
-                    membrane_proof,
-                    modifiers,
-                    ..
-                } => {
-                    let proof_bytes = base64::prelude::BASE64_STANDARD.decode(proof)?;
-                    *membrane_proof = Some(Arc::new(SerializedBytes::from(UnsafeBytes::from(
-                        proof_bytes,
-                    ))));
-
-                    *modifiers = Some(DnaModifiersOpt {
-                        network_seed: None,
-                        properties: props.clone(),
-                    })
-                }
-                _ => {
-                    unreachable!();
-                }
-            }
+                    membrane_proof: role_provision
+                        .membrane_proof
+                        .map(|mp| {
+                            let proof_bytes = base64::prelude::BASE64_STANDARD.decode(mp)?;
+                            Ok::<_, UnytCtlError>(Arc::new(SerializedBytes::from(
+                                UnsafeBytes::from(proof_bytes),
+                            )))
+                        })
+                        .transpose()?,
+                    modifiers: role_provision
+                        .dna_modifiers
+                        .map(|dm| {
+                            let properties = dm
+                                .properties
+                                .as_ref()
+                                .map(yaml_serde::to_value)
+                                .transpose()?
+                                .map(YamlProperties::new);
+                            Ok::<_, UnytCtlError>(DnaModifiersOpt {
+                                network_seed: dm.network_seed.filter(|ns| !ns.is_empty()),
+                                properties,
+                            })
+                        })
+                        .transpose()?,
+                    init_properties: None,
+                },
+            );
         }
     }
 
@@ -432,10 +431,7 @@ pub async fn install_happ(
             source: AppBundleSource::Path(happ_path),
             agent_key: Some(existing_agent.into()),
             installed_app_id,
-            network_seed: join_payload
-                .dna_modifiers
-                .and_then(|m| m.network_seed)
-                .filter(|s| !s.is_empty()),
+            network_seed: None,
             roles_settings: Some(role_settings),
             ignore_genesis_failure: false,
             // TODO make this a parameter so that the caller can specify a restore.
